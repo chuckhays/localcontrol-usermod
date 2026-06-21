@@ -21,7 +21,7 @@
  */
 
 //class name. Use something descriptive and leave the ": public Usermod" part :)
-class MyExampleUsermod : public Usermod {
+class LocalControlUsermod : public Usermod {
 
   private:
 
@@ -66,7 +66,7 @@ class MyExampleUsermod : public Usermod {
     inline bool isEnabled() { return enabled; }
 
     // To access this usermod from another usermod, cast the result of UsermodManager::lookup():
-    //   MyExampleUsermod* um = (MyExampleUsermod*) UsermodManager::lookup(USERMOD_ID_MYUSERMOD);
+    //   LocalControlUsermod* um = (LocalControlUsermod*) UsermodManager::lookup(USERMOD_ID_LOCALCONTROL);
     // Make sure to assign a unique ID in getId()!
 
 
@@ -348,13 +348,13 @@ class MyExampleUsermod : public Usermod {
 
 
 // add more strings here to reduce flash memory usage
-const char MyExampleUsermod::_name[]    PROGMEM = "ExampleUsermod";
-const char MyExampleUsermod::_enabled[] PROGMEM = "enabled";
+const char LocalControlUsermod::_name[]    PROGMEM = "ExampleUsermod";
+const char LocalControlUsermod::_enabled[] PROGMEM = "enabled";
 
 
 // implementation of non-inline member methods
 
-void MyExampleUsermod::publishMqtt(const char* state, bool retain)
+void LocalControlUsermod::publishMqtt(const char* state, bool retain)
 {
 #ifndef WLED_DISABLE_MQTT
   //Check if MQTT Connected, otherwise it will crash the 8266
@@ -367,5 +367,5 @@ void MyExampleUsermod::publishMqtt(const char* state, bool retain)
 #endif
 }
 
-static MyExampleUsermod example_usermod;
-REGISTER_USERMOD(example_usermod);
+static LocalControlUsermod local_control_usermod;
+REGISTER_USERMOD(local_control_usermod);
