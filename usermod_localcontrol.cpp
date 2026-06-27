@@ -1,4 +1,14 @@
 #include "wled.h"
+#include <SPI.h>
+// #include <XPT2046_Touchscreen.h>
+#include <TFT_eSPI.h>
+#include "KY040-rotary.h"
+
+// #define XPT2046_IRQ 38
+// #define XPT2046_MOSI 45
+// #define XPT2046_MISO 39
+// #define XPT2046_CLK 47
+// #define XPT2046_CS 48
 
 /*
  * Usermods allow you to add own functionality to WLED without touching core source files.
@@ -20,10 +30,41 @@
  * file edits are needed.
  */
 
+//  void rotarty1SwitchInterruptHandler() { rotary1.HandleSwitchInterrupt(); }
+//  void rotarty1RotateInterruptHandler() { rotary1.HandleRotateInterrupt(); }
+//  void rotarty2SwitchInterruptHandler() { rotary2.HandleSwitchInterrupt(); }
+//  void rotarty2RotateInterruptHandler() { rotary2.HandleRotateInterrupt(); }
+
+
 //class name. Use something descriptive and leave the ": public Usermod" part :)
 class LocalControlUsermod : public Usermod {
 
   private:
+
+//   SPIClass mySpi = SPIClass(HSPI);
+// XPT2046_Touchscreen ts = XPT2046_Touchscreen(48, 38);
+
+
+    TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
+    KY040 rotary1 = KY040(5, 6, 7); // CLK, DT, SW
+    KY040 rotary2 = KY040(8, 18, 17); // CLK, DT, SW
+
+// void OnButtonClicked() { Serial.println("Clicked"); }
+// void OnButtonLeft()    { Serial.println("Left"); }
+// void OnButtonRight()   { Serial.println("Right"); }
+
+// void SwitchInterruptHandler() { Rotary.HandleSwitchInterrupt(); }
+// void RotateInterruptHandler() { Rotary.HandleRotateInterrupt(); }
+
+// void setup() {
+//   Serial.begin(9600);
+//   Rotary.Begin(SwitchInterruptHandler, RotateInterruptHandler);
+
+//   Rotary.OnButtonClicked(OnButtonClicked);
+//   Rotary.OnButtonLeft(OnButtonLeft);
+//   Rotary.OnButtonRight(OnButtonRight);
+// }
+
 
     // Private class members. You can declare variables and functions only accessible to your usermod here
     bool enabled = false;
@@ -77,7 +118,29 @@ class LocalControlUsermod : public Usermod {
      */
     void setup() override {
       // do your set-up here
-      //Serial.println("Hello from my usermod!");
+      Serial.println("Hello from my usermod!");
+      // mySpi.begin(47, 39, 45, 48);
+
+      // Use this calibration code in setup():
+  // uint16_t calData[5] = { 398, 3374, 400, 3280, 7 };
+  // tft.setTouch(calData);
+      // ts.begin(mySpi);
+      // ts.setRotation(1);
+
+      tft.init();
+      Serial.println("Called init on tft");
+      tft.setRotation(1); //This is the display in landscape
+      Serial.println("Called set rotation on tft");
+      // // Clear the screen before writing to it
+      tft.fillScreen(TFT_GREEN);
+
+      Serial.println("Called fill screen on tft");
+
+      int x = 320 / 2; // center of display
+      int y = 100;
+      int fontSize = 2;
+      tft.drawCentreString("Touch Screen to Start", x, y, fontSize);
+      Serial.println("Called draw centre string on tft");
       initDone = true;
     }
 
@@ -104,13 +167,66 @@ class LocalControlUsermod : public Usermod {
     void loop() override {
       // if usermod is disabled or called during strip updating just exit
       // NOTE: on very long strips strip.isUpdating() may always return true so update accordingly
-      if (!enabled || strip.isUpdating()) return;
+      // if (!enabled || strip.isUpdating()) return;
+      if (strip.isUpdating()) return;
 
-      // do your magic here
-      if (millis() - lastTime > 1000) {
-        //Serial.println("I'm alive!");
+      rotary1.Process(millis());
+      rotary2.Process(millis());
+
+      bool show = (millis() - lastTime > 1000);
+      if (show) {
         lastTime = millis();
       }
+      // tft.fillScreen(TFT_GREEN);
+
+      // do your magic here
+      if (show) {
+        Serial.println("I'm alive!");
+        // tft.fillScreen(TFT_GREEN);
+      }
+
+        uint16_t x, y;
+  static uint16_t color;
+
+  if (tft.getTouch(&x, &y)) {
+
+    tft.setCursor(5, 5, 2);
+    tft.printf("x: %i     ", x);
+    tft.setCursor(5, 20, 2);
+    tft.printf("y: %i    ", y);
+
+    tft.drawPixel(x, y, color);
+    color += 155;
+    Serial.printf("Touch detected at x: %i, y: %i\n", x, y);
+  }
+
+
+      // if (ts.tirqTouched() && ts.touched()) {
+      //   TS_Point p = ts.getPoint();
+      //   if (show) {
+      //   Serial.print("Pressure = ");
+      //   Serial.print(p.z);
+      //   Serial.print(", x = ");
+      //   Serial.print(p.x);
+      //   Serial.print(", y = ");
+      //   Serial.print(p.y);
+      //   Serial.println();
+      //   }
+
+  // int x = 320 / 2; // center of display
+  //     int y = 100;
+  //     int fontSize = 1;
+  //     tft.drawCentreString("Touch Screen to Start", x, y, fontSize);
+
+    // printTouchToSerial(p);
+    // printTouchToDisplay(value, p);
+    // delay(100);
+
+      // } else if (show){
+      //   Serial.print("None...");
+      //   // Serial.println();
+      //   // delay(100);
+      // }
     }
 
 
@@ -348,7 +464,7 @@ class LocalControlUsermod : public Usermod {
 
 
 // add more strings here to reduce flash memory usage
-const char LocalControlUsermod::_name[]    PROGMEM = "ExampleUsermod";
+const char LocalControlUsermod::_name[]    PROGMEM = "LocalControl";
 const char LocalControlUsermod::_enabled[] PROGMEM = "enabled";
 
 

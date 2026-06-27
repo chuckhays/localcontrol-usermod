@@ -1,7 +1,10 @@
 {
-  "name": "wled-usermod-example",
+  "name": "wled-localcontrol-usermod",
   "build": {
     "libArchive": false
   },
-  "dependencies": {}
+  "dependencies": {
+    "TFT_eSPI": "https://github.com/Bodmer/TFT_eSPI.git#V2.5.43",
+    "KY040-rotary": "https://github.com/dmachard/KY040-rotary.git#v2.0.0"
+  }
 }
