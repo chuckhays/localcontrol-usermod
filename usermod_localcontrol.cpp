@@ -34,7 +34,7 @@ class LocalControlUsermod : public Usermod {
   private:
 
     enum class EncoderId  { Rotary1, Rotary2 };
-    enum class PanelItem  { Brightness = 0, Speed = 1, Intensity = 2, COUNT = 3 };
+    enum class PanelItem  { Brightness = 0, Speed = 1, Intensity = 2, Power = 3, COUNT = 4 };
 
     PanelItem panelSelected = PanelItem::Brightness;
 
@@ -59,6 +59,11 @@ class LocalControlUsermod : public Usermod {
                 case PanelItem::Intensity:
                     effectIntensity = (uint8_t)constrain((int)effectIntensity + delta * 5, 0, 255);
                     strip.getMainSegment().intensity = effectIntensity;
+                    stateUpdated(CALL_MODE_BUTTON);
+                    break;
+                case PanelItem::Power:
+                    if (bri > 0) { briLast = bri; bri = 0; }
+                    else         { bri = briLast; }
                     stateUpdated(CALL_MODE_BUTTON);
                     break;
                 default: break;
@@ -188,69 +193,82 @@ class LocalControlUsermod : public Usermod {
       tft.fillCircle  (x+10, y+15, 3,                        yellow);
       tft.fillTriangle(x+10, y+10, x+8,  y+15, x+12, y+15, yellow);
     }
-    // ── Control panel (top 240×100 px, three 80-px columns) ─────────────────
-    //
-    //  col 0            col 1            col 2
-    //  ┌──────────┐    ┌──────────┐    ┌──────────┐
-    //  │  [icon]  │    │  [icon]  │    │  [icon]  │   y=10 icon (20×20)
-    //  │   128    │    │    50    │    │    75    │   y=36 value (font 2)
-    //  │ ──────── │    │          │    │          │   y=56 underline if selected
-    //  └──────────┘    └──────────┘    └──────────┘
+    // Classic power symbol: ring with a gap at top and a vertical bar
+    void drawIconPower(int x, int y, uint16_t color) {
+      int cx = x + 10, cy = y + 12;
+      tft.fillCircle(cx, cy, 7, color);
+      tft.fillCircle(cx, cy, 4, TFT_BLACK);
+      // Clear top gap so the bar "interrupts" the ring
+      tft.fillRect(cx - 2, y + 4, 5, 6, TFT_BLACK);
+      // Vertical bar
+      tft.fillRect(cx - 1, y + 2, 3, 8, color);
+    }
 
-    static constexpr int PANEL_COL_W   = 80;
+    // ── Control panel (top 240×100 px, four 60-px columns) ──────────────────
+    //
+    //  col 0         col 1         col 2         col 3
+    //  ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐
+    //  │ [icon] │   │ [icon] │   │ [icon] │   │ [icon] │   y=8  icon (20×20)
+    //  │  128   │   │   50   │   │   75   │   │  ON    │   y=34 value (font 2)
+    //  │ ────── │   │        │   │        │   │        │   y=54 underline
+    //  └────────┘   └────────┘   └────────┘   └────────┘
+
+    static constexpr int PANEL_COL_W   = 60;
     static constexpr int PANEL_ICON_Y  = 8;
     static constexpr int PANEL_VAL_Y   = 34;
     static constexpr int PANEL_LINE_Y  = 54;
 
     void drawPanelItem(int col, bool selected) {
-        int cx = col * PANEL_COL_W;          // left edge
-        int iconX = cx + 30;                 // centre the 20-px icon in 80-px column
+        int cx    = col * PANEL_COL_W;              // left edge of column
+        int iconX = cx + (PANEL_COL_W - 20) / 2;   // centre the 20-px icon
 
         // Clear column
         tft.fillRect(cx, 0, PANEL_COL_W, 100, TFT_BLACK);
 
         // Icon
+        bool isOn = (bri > 0);
         switch ((PanelItem)col) {
             case PanelItem::Brightness:
-                drawIconSun(iconX, PANEL_ICON_Y, selected ? TFT_YELLOW : tft.color565(180, 180, 0));
+                drawIconSun(iconX, PANEL_ICON_Y, selected ? TFT_YELLOW : tft.color565(230, 230, 0));
                 break;
             case PanelItem::Speed:
-                drawIconSpeed(iconX, PANEL_ICON_Y, selected ? TFT_GREEN : tft.color565(0, 160, 0));
+                drawIconSpeed(iconX, PANEL_ICON_Y, selected ? TFT_GREEN : tft.color565(0, 230, 0));
                 break;
-            case PanelItem::Intensity:
-                drawIconFire(iconX, PANEL_ICON_Y, 0);
-                if (!selected) {
-                    // Dim the fire icon by overlaying a semi-transparent-ish dark rect
-                    // (TFT has no alpha — approximate with a dark tint fill at low opacity)
-                    // Instead just recolour: redraw with grey tones
-                    uint16_t dimRed = tft.color565(180, 30, 0);
-                    uint16_t dimOrg = tft.color565(210, 100, 0);
-                    uint16_t dimYel = tft.color565(210, 180, 0);
-                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+1,  iconX+2,  PANEL_ICON_Y+14, iconX+18, PANEL_ICON_Y+14, dimRed);
-                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 6,                                                      dimRed);
-                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+5,  iconX+5,  PANEL_ICON_Y+14, iconX+15, PANEL_ICON_Y+14, dimOrg);
-                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 4,                                                      dimOrg);
-                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+15, 3,                                                      dimYel);
-                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+10, iconX+8,  PANEL_ICON_Y+15, iconX+12, PANEL_ICON_Y+15, dimYel);
-                }
+            case PanelItem::Intensity: {
+                uint16_t red = tft.color565(selected ? 220 : 198, selected ? 40 : 36, 0);
+                uint16_t org = tft.color565(selected ? 255 : 230, selected ? 120 : 108, 0);
+                uint16_t yel = tft.color565(selected ? 255 : 230, selected ? 230 : 207, 0);
+                tft.fillTriangle(iconX+10, PANEL_ICON_Y+1,  iconX+2,  PANEL_ICON_Y+14, iconX+18, PANEL_ICON_Y+14, red);
+                tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 6,                                                      red);
+                tft.fillTriangle(iconX+10, PANEL_ICON_Y+5,  iconX+5,  PANEL_ICON_Y+14, iconX+15, PANEL_ICON_Y+14, org);
+                tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 4,                                                      org);
+                tft.fillCircle  (iconX+10, PANEL_ICON_Y+15, 3,                                                      yel);
+                tft.fillTriangle(iconX+10, PANEL_ICON_Y+10, iconX+8,  PANEL_ICON_Y+15, iconX+12, PANEL_ICON_Y+15, yel);
                 break;
+            }
+            case PanelItem::Power: {
+                uint16_t pwrColor = isOn ? (selected ? TFT_GREEN : tft.color565(0, 230, 0))
+                                         : (selected ? TFT_RED   : tft.color565(230, 0, 0));
+                drawIconPower(iconX, PANEL_ICON_Y, pwrColor);
+                break;
+            }
             default: break;
         }
 
-        // Value
-        uint8_t val = 0;
+        // Value label
+        tft.setTextColor(selected ? TFT_WHITE : tft.color565(230, 230, 230), TFT_BLACK);
+        int textCX = cx + PANEL_COL_W / 2;
         switch ((PanelItem)col) {
-            case PanelItem::Brightness: val = bri;             break;
-            case PanelItem::Speed:      val = effectSpeed;     break;
-            case PanelItem::Intensity:  val = effectIntensity; break;
+            case PanelItem::Brightness: tft.drawCentreString(String(bri),             textCX, PANEL_VAL_Y, 2); break;
+            case PanelItem::Speed:      tft.drawCentreString(String(effectSpeed),     textCX, PANEL_VAL_Y, 2); break;
+            case PanelItem::Intensity:  tft.drawCentreString(String(effectIntensity), textCX, PANEL_VAL_Y, 2); break;
+            case PanelItem::Power:      tft.drawCentreString(isOn ? "ON" : "OFF",     textCX, PANEL_VAL_Y, 2); break;
             default: break;
         }
-        tft.setTextColor(selected ? TFT_WHITE : tft.color565(200, 200, 200), TFT_BLACK);
-        tft.drawCentreString(String(val), cx + 40, PANEL_VAL_Y, 2);
 
         // Selection underline
         if (selected) {
-            tft.drawLine(cx + 8, PANEL_LINE_Y, cx + PANEL_COL_W - 8, PANEL_LINE_Y, TFT_WHITE);
+            tft.drawLine(cx + 4, PANEL_LINE_Y, cx + PANEL_COL_W - 4, PANEL_LINE_Y, TFT_WHITE);
         }
     }
 
@@ -334,8 +352,12 @@ class LocalControlUsermod : public Usermod {
 
       // Redraw panel columns whose values changed (encoder or external WLED change)
       if (bri != lastPanelBri) {
+        bool briWasOn = (lastPanelBri > 0);
+        bool briIsOn  = (bri > 0);
         lastPanelBri = bri;
         drawPanelItem((int)PanelItem::Brightness, panelSelected == PanelItem::Brightness);
+        if (briWasOn != briIsOn)
+          drawPanelItem((int)PanelItem::Power, panelSelected == PanelItem::Power);
       }
       if (effectSpeed != lastPanelSpeed) {
         lastPanelSpeed = effectSpeed;
