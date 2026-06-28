@@ -97,12 +97,15 @@ void IRAM_ATTR KY040Encoder::handleButtonISR()
         if (!_pressed && (now - _lastButtonMs > 100))
         {
             _pressed = true;
-            _buttonPending = true;
+            _pressStartMs = now;
         }
     }
     else
     {
+        if (_pressed && !_longPressFired)
+            _buttonPending = true;
         _pressed = false;
+        _longPressFired = false;
         _lastButtonMs = now;
     }
 }

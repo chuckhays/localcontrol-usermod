@@ -45,13 +45,20 @@ class LocalControlUsermod : public Usermod {
         Serial.printf("Encoder %d clicked\n", (int)id);
     }
 
+    void onEncoderLongPress(EncoderId id) {
+        Serial.printf("Encoder %d long press\n", (int)id);
+    }
+
     TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
+    TFT_eSPI_Button btnClickMe;
     KY040Encoder rotary1{5, 6, 7,
         [this](int delta) { onEncoderRotate(EncoderId::Rotary1, delta); },
-        [this]()          { onEncoderClick(EncoderId::Rotary1); }};
+        [this]()          { onEncoderClick(EncoderId::Rotary1); },
+        [this]()          { onEncoderLongPress(EncoderId::Rotary1); }};
     KY040Encoder rotary2{8, 18, 17,
         [this](int delta) { onEncoderRotate(EncoderId::Rotary2, delta); },
-        [this]()          { onEncoderClick(EncoderId::Rotary2); }};
+        [this]()          { onEncoderClick(EncoderId::Rotary2); },
+        [this]()          { onEncoderLongPress(EncoderId::Rotary2); }};
 
 
     // Private class members. You can declare variables and functions only accessible to your usermod here
@@ -132,6 +139,11 @@ class LocalControlUsermod : public Usermod {
       int fontSize = 2;
       tft.drawCentreString("Touch Screen to Start", x, y, fontSize);
       Serial.println("Called draw centre string on tft");
+
+      // Draw "click me" button near upper-left
+      btnClickMe.initButton(&tft, 160, 120, 100, 30, TFT_WHITE, TFT_BLUE, TFT_WHITE, (char*)"click me", 2);
+      btnClickMe.drawButton();
+
       initDone = true;
     }
 
@@ -174,13 +186,36 @@ class LocalControlUsermod : public Usermod {
       if (show) {
         Serial.println("I'm alive!");
         // tft.fillScreen(TFT_GREEN);
+
+        static uint8_t lastEffect = 255;
+        if (effectCurrent != lastEffect) {
+          lastEffect = effectCurrent;
+          char effectName[32];
+          strncpy_P(effectName, strip.getModeData(effectCurrent), sizeof(effectName) - 1);
+          effectName[sizeof(effectName) - 1] = '\0';
+          char* at = strchr(effectName, '@');
+          if (at) *at = '\0';
+          tft.fillRect(0, TFT_HEIGHT / 2 - 10, TFT_WIDTH, 20, TFT_BLACK);
+          tft.drawCentreString(effectName, TFT_WIDTH / 2, TFT_HEIGHT / 2 - 8, 2);
+        }
       }
 
         uint16_t x, y;
   static uint16_t color;
 
-  if (tft.getTouch(&x, &y)) {
+  bool touched = tft.getTouch(&x, &y);
+  btnClickMe.press(touched && btnClickMe.contains(x, y));
 
+  if (btnClickMe.justPressed()) {
+    btnClickMe.drawButton(true); // draw inverted/pressed state
+    Serial.println("click me pressed");
+  }
+  if (btnClickMe.justReleased()) {
+    btnClickMe.drawButton(false); // restore normal state
+    Serial.println("click me released");
+  }
+
+  if (touched) {
     tft.setCursor(5, 5, 2);
     tft.printf("x: %i     ", x);
     tft.setCursor(5, 20, 2);
