@@ -35,17 +35,23 @@ class LocalControlUsermod : public Usermod {
 
   private:
 
-//   SPIClass mySpi = SPIClass(HSPI);
-// XPT2046_Touchscreen ts = XPT2046_Touchscreen(48, 38);
+    enum class EncoderId { Rotary1, Rotary2 };
 
+    void onEncoderRotate(EncoderId id, int delta) {
+        Serial.printf("Encoder %d: %+d\n", (int)id, delta);
+    }
+
+    void onEncoderClick(EncoderId id) {
+        Serial.printf("Encoder %d clicked\n", (int)id);
+    }
 
     TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
     KY040Encoder rotary1{5, 6, 7,
-        [](int delta) { Serial.printf("Rotary1: %+d\n", delta); },
-        []()          { Serial.println("Rotary1 clicked"); }};
+        [this](int delta) { onEncoderRotate(EncoderId::Rotary1, delta); },
+        [this]()          { onEncoderClick(EncoderId::Rotary1); }};
     KY040Encoder rotary2{8, 18, 17,
-        [](int delta) { Serial.printf("Rotary2: %+d\n", delta); },
-        []()          { Serial.println("Rotary2 clicked"); }};
+        [this](int delta) { onEncoderRotate(EncoderId::Rotary2, delta); },
+        [this]()          { onEncoderClick(EncoderId::Rotary2); }};
 
 
     // Private class members. You can declare variables and functions only accessible to your usermod here
