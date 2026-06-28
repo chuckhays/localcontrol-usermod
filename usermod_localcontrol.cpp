@@ -83,6 +83,78 @@ class LocalControlUsermod : public Usermod {
     // any private methods should go here (non-inline method should be defined out of class)
     void publishMqtt(const char* state, bool retain = false); // example for publishing MQTT message
 
+    // ── Icon drawing helpers ─────────────────────────────────────────────────
+    // Each draws a 20×20 icon with its top-left corner at (x, y).
+
+    enum class ArrowDir { Right, Left, Up, Down };
+
+    // Filled triangle arrow — menu position indicator
+    void drawIconArrow(int x, int y, uint16_t color, ArrowDir dir = ArrowDir::Right) {
+      switch (dir) {
+        case ArrowDir::Right:
+          tft.fillTriangle(x,      y+10, x+18, y+1,  x+18, y+18, color); break;
+        case ArrowDir::Left:
+          tft.fillTriangle(x+19,   y+10, x+1,  y+1,  x+1,  y+18, color); break;
+        case ArrowDir::Up:
+          tft.fillTriangle(x+10,   y,    x+1,  y+18, x+18, y+18, color); break;
+        case ArrowDir::Down:
+          tft.fillTriangle(x+10,   y+19, x+1,  y+1,  x+18, y+1,  color); break;
+      }
+    }
+
+    // Circle with 8 tick-marks around it — brightness / sun
+    void drawIconSun(int x, int y, uint16_t color) {
+      int cx = x + 10, cy = y + 10;
+      tft.fillCircle(cx, cy, 4, color);
+      // 8 rays evenly spaced
+      for (int i = 0; i < 8; i++) {
+        float angle = i * (M_PI / 4.0f);
+        int x1 = cx + (int)(cosf(angle) * 6);
+        int y1 = cy + (int)(sinf(angle) * 6);
+        int x2 = cx + (int)(cosf(angle) * 9);
+        int y2 = cy + (int)(sinf(angle) * 9);
+        tft.drawLine(x1, y1, x2, y2, color);
+      }
+    }
+
+    // Two left-pointing triangles side-by-side — speed (180° flipped fast-forward)
+    void drawIconSpeed(int x, int y, uint16_t color) {
+      // left triangle
+      tft.fillTriangle(
+        x,      y + 1,
+        x,      y + 18,
+        x + 9,  y + 10,
+        color
+      );
+      // right triangle
+      tft.fillTriangle(
+        x + 10, y + 1,
+        x + 10, y + 18,
+        x + 19, y + 10,
+        color
+      );
+    }
+
+    // Layered flame with round base and yellow teardrop core
+    void drawIconFire(int x, int y, uint16_t /*color*/) {
+      uint16_t red    = tft.color565(220, 40,  0);
+      uint16_t orange = tft.color565(255, 120, 0);
+      uint16_t yellow = tft.color565(255, 230, 0);
+
+      // Outer red-orange: pointed top + round base
+      tft.fillTriangle(x+10, y+1,  x+2,  y+14, x+18, y+14, red);
+      tft.fillCircle  (x+10, y+14, 6,                        red);
+
+      // Mid orange layer: narrower triangle + slightly smaller circle
+      tft.fillTriangle(x+10, y+5,  x+5,  y+14, x+15, y+14, orange);
+      tft.fillCircle  (x+10, y+14, 4,                        orange);
+
+      // Yellow teardrop core: circle at base + triangle pointing up
+      tft.fillCircle  (x+10, y+15, 3,                        yellow);
+      tft.fillTriangle(x+10, y+10, x+8,  y+15, x+12, y+15, yellow);
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
 
   public:
 
@@ -122,6 +194,31 @@ class LocalControlUsermod : public Usermod {
       tft.init();
       tft.setRotation(2);
       tft.fillScreen(TFT_BLACK);
+
+      // ── Icon evaluation layout ───────────────────────────────────────────
+      // Draw all four 20×20 icons spaced across the top of the screen.
+      // Each icon gets a white label below it.
+      int iconY = 10;
+      int labelY = 34;
+      int spacing = 30;
+
+      // 1 Arrow (cyan)
+      drawIconArrow(5, iconY, TFT_CYAN);
+      tft.setTextColor(TFT_WHITE, TFT_BLACK);
+      tft.drawString("Pos", 5, labelY, 1);
+
+      // 2 Sun (yellow)
+      drawIconSun(5 + spacing, iconY, TFT_YELLOW);
+      tft.drawString("Sun", 5 + spacing, labelY, 1);
+
+      // 3 Speed (green)
+      drawIconSpeed(5 + spacing * 2, iconY, TFT_GREEN);
+      tft.drawString("Spd", 5 + spacing * 2, labelY, 1);
+
+      // 4 Fire (red base, internal colours applied automatically)
+      drawIconFire(5 + spacing * 3, iconY, tft.color565(220, 30, 0));
+      tft.drawString("Fire", 5 + spacing * 3, labelY, 1);
+      // ────────────────────────────────────────────────────────────────────
 
       initDone = true;
     }
