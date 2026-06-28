@@ -2,7 +2,7 @@
 #include <SPI.h>
 // #include <XPT2046_Touchscreen.h>
 #include <TFT_eSPI.h>
-#include "KY040-rotary.h"
+#include "KY040Encoder.h"
 
 // #define XPT2046_IRQ 38
 // #define XPT2046_MOSI 45
@@ -30,12 +30,6 @@
  * file edits are needed.
  */
 
-//  void rotarty1SwitchInterruptHandler() { rotary1.HandleSwitchInterrupt(); }
-//  void rotarty1RotateInterruptHandler() { rotary1.HandleRotateInterrupt(); }
-//  void rotarty2SwitchInterruptHandler() { rotary2.HandleSwitchInterrupt(); }
-//  void rotarty2RotateInterruptHandler() { rotary2.HandleRotateInterrupt(); }
-
-
 //class name. Use something descriptive and leave the ": public Usermod" part :)
 class LocalControlUsermod : public Usermod {
 
@@ -46,24 +40,12 @@ class LocalControlUsermod : public Usermod {
 
 
     TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
-    KY040 rotary1 = KY040(5, 6, 7); // CLK, DT, SW
-    KY040 rotary2 = KY040(8, 18, 17); // CLK, DT, SW
-
-// void OnButtonClicked() { Serial.println("Clicked"); }
-// void OnButtonLeft()    { Serial.println("Left"); }
-// void OnButtonRight()   { Serial.println("Right"); }
-
-// void SwitchInterruptHandler() { Rotary.HandleSwitchInterrupt(); }
-// void RotateInterruptHandler() { Rotary.HandleRotateInterrupt(); }
-
-// void setup() {
-//   Serial.begin(9600);
-//   Rotary.Begin(SwitchInterruptHandler, RotateInterruptHandler);
-
-//   Rotary.OnButtonClicked(OnButtonClicked);
-//   Rotary.OnButtonLeft(OnButtonLeft);
-//   Rotary.OnButtonRight(OnButtonRight);
-// }
+    KY040Encoder rotary1{5, 6, 7,
+        [](int delta) { Serial.printf("Rotary1: %+d\n", delta); },
+        []()          { Serial.println("Rotary1 clicked"); }};
+    KY040Encoder rotary2{8, 18, 17,
+        [](int delta) { Serial.printf("Rotary2: %+d\n", delta); },
+        []()          { Serial.println("Rotary2 clicked"); }};
 
 
     // Private class members. You can declare variables and functions only accessible to your usermod here
@@ -127,6 +109,9 @@ class LocalControlUsermod : public Usermod {
       // ts.begin(mySpi);
       // ts.setRotation(1);
 
+      rotary1.begin();
+      rotary2.begin();
+
       tft.init();
       Serial.println("Called init on tft");
       tft.setRotation(1); //This is the display in landscape
@@ -170,8 +155,8 @@ class LocalControlUsermod : public Usermod {
       // if (!enabled || strip.isUpdating()) return;
       if (strip.isUpdating()) return;
 
-      rotary1.Process(millis());
-      rotary2.Process(millis());
+      rotary1.loop();
+      rotary2.loop();
 
       bool show = (millis() - lastTime > 1000);
       if (show) {
