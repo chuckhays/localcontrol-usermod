@@ -1,6 +1,5 @@
 #include "wled.h"
 #include <SPI.h>
-// #include <XPT2046_Touchscreen.h>
 #include <TFT_eSPI.h>
 #include "KY040Encoder.h"
 
@@ -30,7 +29,6 @@
  * file edits are needed.
  */
 
-//class name. Use something descriptive and leave the ": public Usermod" part :)
 class LocalControlUsermod : public Usermod {
 
   private:
@@ -50,7 +48,6 @@ class LocalControlUsermod : public Usermod {
     }
 
     TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
-    TFT_eSPI_Button btnClickMe;
     KY040Encoder rotary1{5, 6, 7,
         [this](int delta) { onEncoderRotate(EncoderId::Rotary1, delta); },
         [this]()          { onEncoderClick(EncoderId::Rotary1); },
@@ -113,49 +110,28 @@ class LocalControlUsermod : public Usermod {
      */
     void setup() override {
       // do your set-up here
-      Serial.println("Hello from my usermod!");
-      // mySpi.begin(47, 39, 45, 48);
+      Serial.println("Setting up localcontrol");
 
       // Use this calibration code in setup():
-  // uint16_t calData[5] = { 398, 3374, 400, 3280, 7 };
-  // tft.setTouch(calData);
-      // ts.begin(mySpi);
-      // ts.setRotation(1);
+      // uint16_t calData[5] = { 398, 3374, 400, 3280, 7 };
+      // tft.setTouch(calData);
 
       rotary1.begin();
       rotary2.begin();
 
       tft.init();
-      Serial.println("Called init on tft");
-      tft.setRotation(1); //This is the display in landscape
-      Serial.println("Called set rotation on tft");
-      // // Clear the screen before writing to it
-      tft.fillScreen(TFT_GREEN);
-
-      Serial.println("Called fill screen on tft");
-
-      int x = 320 / 2; // center of display
-      int y = 100;
-      int fontSize = 2;
-      tft.drawCentreString("Touch Screen to Start", x, y, fontSize);
-      Serial.println("Called draw centre string on tft");
-
-      // Draw "click me" button near upper-left
-      btnClickMe.initButton(&tft, 160, 120, 100, 30, TFT_WHITE, TFT_BLUE, TFT_WHITE, (char*)"click me", 2);
-      btnClickMe.drawButton();
+      tft.setRotation(2);
+      tft.fillScreen(TFT_BLACK);
 
       initDone = true;
     }
-
 
     /*
      * connected() is called every time the WiFi is (re)connected
      * Use it to initialize network interfaces
      */
     void connected() override {
-      //Serial.println("Connected to WiFi!");
     }
-
 
     /*
      * loop() is called continuously. Here you can check for events, read sensors, etc.
@@ -180,13 +156,8 @@ class LocalControlUsermod : public Usermod {
       if (show) {
         lastTime = millis();
       }
-      // tft.fillScreen(TFT_GREEN);
 
-      // do your magic here
       if (show) {
-        Serial.println("I'm alive!");
-        // tft.fillScreen(TFT_GREEN);
-
         static uint8_t lastEffect = 255;
         if (effectCurrent != lastEffect) {
           lastEffect = effectCurrent;
@@ -201,58 +172,10 @@ class LocalControlUsermod : public Usermod {
       }
 
         uint16_t x, y;
-  static uint16_t color;
-
   bool touched = tft.getTouch(&x, &y);
-  btnClickMe.press(touched && btnClickMe.contains(x, y));
-
-  if (btnClickMe.justPressed()) {
-    btnClickMe.drawButton(true); // draw inverted/pressed state
-    Serial.println("click me pressed");
-  }
-  if (btnClickMe.justReleased()) {
-    btnClickMe.drawButton(false); // restore normal state
-    Serial.println("click me released");
-  }
-
   if (touched) {
-    tft.setCursor(5, 5, 2);
-    tft.printf("x: %i     ", x);
-    tft.setCursor(5, 20, 2);
-    tft.printf("y: %i    ", y);
-
-    tft.drawPixel(x, y, color);
-    color += 155;
     Serial.printf("Touch detected at x: %i, y: %i\n", x, y);
   }
-
-
-      // if (ts.tirqTouched() && ts.touched()) {
-      //   TS_Point p = ts.getPoint();
-      //   if (show) {
-      //   Serial.print("Pressure = ");
-      //   Serial.print(p.z);
-      //   Serial.print(", x = ");
-      //   Serial.print(p.x);
-      //   Serial.print(", y = ");
-      //   Serial.print(p.y);
-      //   Serial.println();
-      //   }
-
-  // int x = 320 / 2; // center of display
-  //     int y = 100;
-  //     int fontSize = 1;
-  //     tft.drawCentreString("Touch Screen to Start", x, y, fontSize);
-
-    // printTouchToSerial(p);
-    // printTouchToDisplay(value, p);
-    // delay(100);
-
-      // } else if (show){
-      //   Serial.print("None...");
-      //   // Serial.println();
-      //   // delay(100);
-      // }
     }
 
 
