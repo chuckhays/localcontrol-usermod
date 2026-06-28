@@ -43,8 +43,39 @@ class LocalControlUsermod : public Usermod {
     uint8_t lastPanelSpeed     = 255;
     uint8_t lastPanelIntensity = 255;
 
+    // ── Effect list state ────────────────────────────────────────────────────
+    static constexpr int FXLIST_TOP     = 100;  // y where the list starts
+    static constexpr int FXLIST_HEIGHT  = 220;  // available height
+    static constexpr int FXLIST_ROW_H   = 17;   // height of each row (font 2 ~16px + 1px gap)
+    static constexpr int FXLIST_VISIBLE = FXLIST_HEIGHT / FXLIST_ROW_H;  // rows on screen at once
+    static constexpr int FXLIST_ARROW_W = 12;   // space reserved for the active-effect arrow
+    static constexpr int FXLIST_TEXT_X  = FXLIST_ARROW_W + 2;
+
+    int listScrollOffset  = 0;
+    int listCursorIndex   = 0;
+    uint8_t lastListEffect = 255;
+    bool listInitialized  = false;
+    // ────────────────────────────────────────────────────────────────────────
+
     void onEncoderRotate(EncoderId id, int delta) {
         Serial.printf("Encoder %d: %+d\n", (int)id, delta);
+        if (id == EncoderId::Rotary2) {
+            int count      = strip.getModeCount();
+            int prevCursor = listCursorIndex;
+            int prevOffset = listScrollOffset;
+            listCursorIndex = constrain(listCursorIndex + delta, 0, count - 1);
+            if (listCursorIndex < listScrollOffset)
+                listScrollOffset = listCursorIndex;
+            else if (listCursorIndex >= listScrollOffset + FXLIST_VISIBLE)
+                listScrollOffset = listCursorIndex - FXLIST_VISIBLE + 1;
+            if (listScrollOffset != prevOffset) {
+                drawEffectList();
+            } else {
+                drawEffectRow(prevCursor);
+                drawEffectRow(listCursorIndex);
+            }
+            return;
+        }
         if (id == EncoderId::Rotary1) {
             switch (panelSelected) {
                 case PanelItem::Brightness:
@@ -73,6 +104,16 @@ class LocalControlUsermod : public Usermod {
 
     void onEncoderClick(EncoderId id) {
         Serial.printf("Encoder %d clicked\n", (int)id);
+        if (id == EncoderId::Rotary2) {
+            uint8_t prev = effectCurrent;
+            effectCurrent = (uint8_t)listCursorIndex;
+            strip.getMainSegment().mode = effectCurrent;
+            stateUpdated(CALL_MODE_BUTTON);
+            // Redraw old active row and new active row
+            drawEffectRow(prev);
+            drawEffectRow(effectCurrent);
+            return;
+        }
         if (id == EncoderId::Rotary1) {
             int next = ((int)panelSelected + 1) % (int)PanelItem::COUNT;
             PanelItem prev = panelSelected;
@@ -203,6 +244,63 @@ class LocalControlUsermod : public Usermod {
       // Vertical bar
       tft.fillRect(cx - 1, y + 2, 3, 8, color);
     }
+
+    // ── Effect list ──────────────────────────────────────────────────────────
+
+    // Extract a short effect name (strip everything from '@' onward)
+    void getEffectName(uint8_t idx, char* buf, size_t bufLen) {
+        strncpy_P(buf, strip.getModeData(idx), bufLen - 1);
+        buf[bufLen - 1] = '\0';
+        char* at = strchr(buf, '@');
+        if (at) *at = '\0';
+    }
+
+    // Draw a single row by effect index. No-ops if the row is not currently visible.
+    void drawEffectRow(int idx) {
+        if (idx < listScrollOffset || idx >= listScrollOffset + FXLIST_VISIBLE) return;
+
+        int row = idx - listScrollOffset;
+        int y   = FXLIST_TOP + row * FXLIST_ROW_H;
+
+        bool isActive = (idx == (int)effectCurrent);
+        bool isCursor = (idx == listCursorIndex);
+
+        // Background
+        tft.fillRect(0, y, TFT_WIDTH, FXLIST_ROW_H, TFT_BLACK);
+
+        // Active-effect arrow — small right-pointing triangle, vertically centred in row
+        if (isActive) {
+            int ay = y + FXLIST_ROW_H / 2;
+            tft.fillTriangle(1, ay - 5, 1, ay + 5, 10, ay, TFT_CYAN);
+        }
+
+        // Cursor outline box
+        if (isCursor && !isActive) {
+            tft.drawRect(FXLIST_ARROW_W, y, TFT_WIDTH - FXLIST_ARROW_W, FXLIST_ROW_H - 1,
+                         tft.color565(100, 100, 100));
+        }
+
+        // Effect name
+        char name[33];
+        getEffectName((uint8_t)idx, name, sizeof(name));
+
+        uint16_t textColor = isActive ? TFT_CYAN
+                           : isCursor ? TFT_WHITE
+                                      : tft.color565(160, 160, 160);
+        tft.setTextColor(textColor, TFT_BLACK);
+        tft.drawString(name, FXLIST_TEXT_X + 2, y + 1, 2);
+    }
+
+    // Redraw the entire visible portion of the effect list
+    void drawEffectList() {
+        tft.fillRect(0, FXLIST_TOP, TFT_WIDTH, FXLIST_HEIGHT, TFT_BLACK);
+        int count = strip.getModeCount();
+        int end   = min(listScrollOffset + FXLIST_VISIBLE, count);
+        for (int i = listScrollOffset; i < end; i++) {
+            drawEffectRow(i);
+        }
+    }
+    // ────────────────────────────────────────────────────────────────────────
 
     // ── Control panel (top 240×100 px, four 60-px columns) ──────────────────
     //
@@ -368,22 +466,29 @@ class LocalControlUsermod : public Usermod {
         drawPanelItem((int)PanelItem::Intensity, panelSelected == PanelItem::Intensity);
       }
 
-      bool show = (millis() - lastTime > 1000);
-      if (show) {
-        lastTime = millis();
+      // Lazy init: defer until strip has registered its effects
+      if (!listInitialized && strip.getModeCount() > 1) {
+        listInitialized  = true;
+        lastListEffect   = effectCurrent;
+        listCursorIndex  = effectCurrent;
+        listScrollOffset = constrain((int)effectCurrent - FXLIST_VISIBLE / 2,
+                                     0, (int)strip.getModeCount() - FXLIST_VISIBLE);
+        drawEffectList();
       }
 
-      if (show) {
-        static uint8_t lastEffect = 255;
-        if (effectCurrent != lastEffect) {
-          lastEffect = effectCurrent;
-          char effectName[32];
-          strncpy_P(effectName, strip.getModeData(effectCurrent), sizeof(effectName) - 1);
-          effectName[sizeof(effectName) - 1] = '\0';
-          char* at = strchr(effectName, '@');
-          if (at) *at = '\0';
-          tft.fillRect(0, TFT_HEIGHT / 2 - 10, TFT_WIDTH, 20, TFT_BLACK);
-          tft.drawCentreString(effectName, TFT_WIDTH / 2, TFT_HEIGHT / 2 - 8, 2);
+      // If effect changed externally (app, preset, etc.) sync cursor and scroll.
+      if (listInitialized && effectCurrent != lastListEffect) {
+        uint8_t prev = lastListEffect;
+        lastListEffect  = effectCurrent;
+        listCursorIndex = effectCurrent;  // keep cursor in sync with active effect
+        if ((int)effectCurrent < listScrollOffset ||
+            (int)effectCurrent >= listScrollOffset + FXLIST_VISIBLE) {
+            listScrollOffset = constrain((int)effectCurrent - FXLIST_VISIBLE / 2,
+                                         0, (int)strip.getModeCount() - FXLIST_VISIBLE);
+            drawEffectList();
+        } else {
+            drawEffectRow(prev);
+            drawEffectRow(effectCurrent);
         }
       }
 
