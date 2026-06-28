@@ -33,14 +33,49 @@ class LocalControlUsermod : public Usermod {
 
   private:
 
-    enum class EncoderId { Rotary1, Rotary2 };
+    enum class EncoderId  { Rotary1, Rotary2 };
+    enum class PanelItem  { Brightness = 0, Speed = 1, Intensity = 2, COUNT = 3 };
+
+    PanelItem panelSelected = PanelItem::Brightness;
+
+    // Cached values — panel column is redrawn only when its value changes
+    uint8_t lastPanelBri       = 255;
+    uint8_t lastPanelSpeed     = 255;
+    uint8_t lastPanelIntensity = 255;
 
     void onEncoderRotate(EncoderId id, int delta) {
         Serial.printf("Encoder %d: %+d\n", (int)id, delta);
+        if (id == EncoderId::Rotary1) {
+            switch (panelSelected) {
+                case PanelItem::Brightness:
+                    bri = (uint8_t)constrain((int)bri + delta * 5, 0, 255);
+                    stateUpdated(CALL_MODE_BUTTON);
+                    break;
+                case PanelItem::Speed:
+                    effectSpeed = (uint8_t)constrain((int)effectSpeed + delta * 5, 0, 255);
+                    strip.getMainSegment().speed = effectSpeed;
+                    stateUpdated(CALL_MODE_BUTTON);
+                    break;
+                case PanelItem::Intensity:
+                    effectIntensity = (uint8_t)constrain((int)effectIntensity + delta * 5, 0, 255);
+                    strip.getMainSegment().intensity = effectIntensity;
+                    stateUpdated(CALL_MODE_BUTTON);
+                    break;
+                default: break;
+            }
+        }
     }
 
     void onEncoderClick(EncoderId id) {
         Serial.printf("Encoder %d clicked\n", (int)id);
+        if (id == EncoderId::Rotary1) {
+            int next = ((int)panelSelected + 1) % (int)PanelItem::COUNT;
+            PanelItem prev = panelSelected;
+            panelSelected = (PanelItem)next;
+            // Redraw both old and new column to update selection indicator
+            drawPanelItem((int)prev, false);
+            drawPanelItem((int)panelSelected, true);
+        }
     }
 
     void onEncoderLongPress(EncoderId id) {
@@ -153,6 +188,77 @@ class LocalControlUsermod : public Usermod {
       tft.fillCircle  (x+10, y+15, 3,                        yellow);
       tft.fillTriangle(x+10, y+10, x+8,  y+15, x+12, y+15, yellow);
     }
+    // ── Control panel (top 240×100 px, three 80-px columns) ─────────────────
+    //
+    //  col 0            col 1            col 2
+    //  ┌──────────┐    ┌──────────┐    ┌──────────┐
+    //  │  [icon]  │    │  [icon]  │    │  [icon]  │   y=10 icon (20×20)
+    //  │   128    │    │    50    │    │    75    │   y=36 value (font 2)
+    //  │ ──────── │    │          │    │          │   y=56 underline if selected
+    //  └──────────┘    └──────────┘    └──────────┘
+
+    static constexpr int PANEL_COL_W   = 80;
+    static constexpr int PANEL_ICON_Y  = 8;
+    static constexpr int PANEL_VAL_Y   = 34;
+    static constexpr int PANEL_LINE_Y  = 54;
+
+    void drawPanelItem(int col, bool selected) {
+        int cx = col * PANEL_COL_W;          // left edge
+        int iconX = cx + 30;                 // centre the 20-px icon in 80-px column
+
+        // Clear column
+        tft.fillRect(cx, 0, PANEL_COL_W, 100, TFT_BLACK);
+
+        // Icon
+        switch ((PanelItem)col) {
+            case PanelItem::Brightness:
+                drawIconSun(iconX, PANEL_ICON_Y, selected ? TFT_YELLOW : tft.color565(180, 180, 0));
+                break;
+            case PanelItem::Speed:
+                drawIconSpeed(iconX, PANEL_ICON_Y, selected ? TFT_GREEN : tft.color565(0, 160, 0));
+                break;
+            case PanelItem::Intensity:
+                drawIconFire(iconX, PANEL_ICON_Y, 0);
+                if (!selected) {
+                    // Dim the fire icon by overlaying a semi-transparent-ish dark rect
+                    // (TFT has no alpha — approximate with a dark tint fill at low opacity)
+                    // Instead just recolour: redraw with grey tones
+                    uint16_t dimRed = tft.color565(180, 30, 0);
+                    uint16_t dimOrg = tft.color565(210, 100, 0);
+                    uint16_t dimYel = tft.color565(210, 180, 0);
+                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+1,  iconX+2,  PANEL_ICON_Y+14, iconX+18, PANEL_ICON_Y+14, dimRed);
+                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 6,                                                      dimRed);
+                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+5,  iconX+5,  PANEL_ICON_Y+14, iconX+15, PANEL_ICON_Y+14, dimOrg);
+                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 4,                                                      dimOrg);
+                    tft.fillCircle  (iconX+10, PANEL_ICON_Y+15, 3,                                                      dimYel);
+                    tft.fillTriangle(iconX+10, PANEL_ICON_Y+10, iconX+8,  PANEL_ICON_Y+15, iconX+12, PANEL_ICON_Y+15, dimYel);
+                }
+                break;
+            default: break;
+        }
+
+        // Value
+        uint8_t val = 0;
+        switch ((PanelItem)col) {
+            case PanelItem::Brightness: val = bri;             break;
+            case PanelItem::Speed:      val = effectSpeed;     break;
+            case PanelItem::Intensity:  val = effectIntensity; break;
+            default: break;
+        }
+        tft.setTextColor(selected ? TFT_WHITE : tft.color565(200, 200, 200), TFT_BLACK);
+        tft.drawCentreString(String(val), cx + 40, PANEL_VAL_Y, 2);
+
+        // Selection underline
+        if (selected) {
+            tft.drawLine(cx + 8, PANEL_LINE_Y, cx + PANEL_COL_W - 8, PANEL_LINE_Y, TFT_WHITE);
+        }
+    }
+
+    void drawPanel() {
+        for (int i = 0; i < (int)PanelItem::COUNT; i++) {
+            drawPanelItem(i, (PanelItem)i == panelSelected);
+        }
+    }
     // ────────────────────────────────────────────────────────────────────────
 
 
@@ -195,30 +301,7 @@ class LocalControlUsermod : public Usermod {
       tft.setRotation(2);
       tft.fillScreen(TFT_BLACK);
 
-      // ── Icon evaluation layout ───────────────────────────────────────────
-      // Draw all four 20×20 icons spaced across the top of the screen.
-      // Each icon gets a white label below it.
-      int iconY = 10;
-      int labelY = 34;
-      int spacing = 30;
-
-      // 1 Arrow (cyan)
-      drawIconArrow(5, iconY, TFT_CYAN);
-      tft.setTextColor(TFT_WHITE, TFT_BLACK);
-      tft.drawString("Pos", 5, labelY, 1);
-
-      // 2 Sun (yellow)
-      drawIconSun(5 + spacing, iconY, TFT_YELLOW);
-      tft.drawString("Sun", 5 + spacing, labelY, 1);
-
-      // 3 Speed (green)
-      drawIconSpeed(5 + spacing * 2, iconY, TFT_GREEN);
-      tft.drawString("Spd", 5 + spacing * 2, labelY, 1);
-
-      // 4 Fire (red base, internal colours applied automatically)
-      drawIconFire(5 + spacing * 3, iconY, tft.color565(220, 30, 0));
-      tft.drawString("Fire", 5 + spacing * 3, labelY, 1);
-      // ────────────────────────────────────────────────────────────────────
+      drawPanel();
 
       initDone = true;
     }
@@ -248,6 +331,20 @@ class LocalControlUsermod : public Usermod {
 
       rotary1.loop();
       rotary2.loop();
+
+      // Redraw panel columns whose values changed (encoder or external WLED change)
+      if (bri != lastPanelBri) {
+        lastPanelBri = bri;
+        drawPanelItem((int)PanelItem::Brightness, panelSelected == PanelItem::Brightness);
+      }
+      if (effectSpeed != lastPanelSpeed) {
+        lastPanelSpeed = effectSpeed;
+        drawPanelItem((int)PanelItem::Speed, panelSelected == PanelItem::Speed);
+      }
+      if (effectIntensity != lastPanelIntensity) {
+        lastPanelIntensity = effectIntensity;
+        drawPanelItem((int)PanelItem::Intensity, panelSelected == PanelItem::Intensity);
+      }
 
       bool show = (millis() - lastTime > 1000);
       if (show) {
