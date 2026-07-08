@@ -9,6 +9,9 @@
 // #define XPT2046_CLK 47
 // #define XPT2046_CS 48
 
+#define ENABLE_PIN 10
+#define LEVEL_SHIFTER_ENABLE_PIN 1
+
 /*
  * Usermods allow you to add own functionality to WLED without touching core source files.
  * See the WLED docs: https://kno.wled.ge/advanced/custom-features/
@@ -44,8 +47,8 @@ class LocalControlUsermod : public Usermod {
     uint8_t lastPanelIntensity = 255;
 
     // ── Effect list state ────────────────────────────────────────────────────
-    static constexpr int FXLIST_TOP     = 100;  // y where the list starts
-    static constexpr int FXLIST_HEIGHT  = 220;  // available height
+    static constexpr int FXLIST_TOP     = 64;   // y where the list starts (must match PANEL_HEIGHT below)
+    static constexpr int FXLIST_HEIGHT  = 176;  // available height (320x240 landscape: 240 - FXLIST_TOP)
     static constexpr int FXLIST_ROW_H   = 17;   // height of each row (font 2 ~16px + 1px gap)
     static constexpr int FXLIST_VISIBLE = FXLIST_HEIGHT / FXLIST_ROW_H;  // rows on screen at once
     static constexpr int FXLIST_ARROW_W = 12;   // space reserved for the active-effect arrow
@@ -266,7 +269,7 @@ class LocalControlUsermod : public Usermod {
         bool isCursor = (idx == listCursorIndex);
 
         // Background
-        tft.fillRect(0, y, TFT_WIDTH, FXLIST_ROW_H, TFT_BLACK);
+        tft.fillRect(0, y, tft.width(), FXLIST_ROW_H, TFT_BLACK);
 
         // Active-effect arrow — small right-pointing triangle, vertically centred in row
         if (isActive) {
@@ -276,7 +279,7 @@ class LocalControlUsermod : public Usermod {
 
         // Cursor outline box
         if (isCursor && !isActive) {
-            tft.drawRect(FXLIST_ARROW_W, y, TFT_WIDTH - FXLIST_ARROW_W, FXLIST_ROW_H - 1,
+            tft.drawRect(FXLIST_ARROW_W, y, tft.width() - FXLIST_ARROW_W, FXLIST_ROW_H - 1,
                          tft.color565(100, 100, 100));
         }
 
@@ -293,7 +296,7 @@ class LocalControlUsermod : public Usermod {
 
     // Redraw the entire visible portion of the effect list
     void drawEffectList() {
-        tft.fillRect(0, FXLIST_TOP, TFT_WIDTH, FXLIST_HEIGHT, TFT_BLACK);
+        tft.fillRect(0, FXLIST_TOP, tft.width(), FXLIST_HEIGHT, TFT_BLACK);
         int count = strip.getModeCount();
         int end   = min(listScrollOffset + FXLIST_VISIBLE, count);
         for (int i = listScrollOffset; i < end; i++) {
@@ -302,16 +305,17 @@ class LocalControlUsermod : public Usermod {
     }
     // ────────────────────────────────────────────────────────────────────────
 
-    // ── Control panel (top 240×100 px, four 60-px columns) ──────────────────
+    // ── Control panel (top 320×64 px, four 80-px columns) ────────────────────
     //
-    //  col 0         col 1         col 2         col 3
-    //  ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐
-    //  │ [icon] │   │ [icon] │   │ [icon] │   │ [icon] │   y=8  icon (20×20)
-    //  │  128   │   │   50   │   │   75   │   │  ON    │   y=34 value (font 2)
-    //  │ ────── │   │        │   │        │   │        │   y=54 underline
-    //  └────────┘   └────────┘   └────────┘   └────────┘
+    //  col 0           col 1           col 2           col 3
+    //  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
+    //  │  [icon]  │   │  [icon]  │   │  [icon]  │   │  [icon]  │   y=8  icon (20×20)
+    //  │   128    │   │    50    │   │    75    │   │   ON     │   y=34 value (font 2)
+    //  │ ──────── │   │          │   │          │   │          │   y=54 underline
+    //  └──────────┘   └──────────┘   └──────────┘   └──────────┘
 
-    static constexpr int PANEL_COL_W   = 60;
+    static constexpr int PANEL_COL_W   = 80;
+    static constexpr int PANEL_HEIGHT  = 64;   // just past the underline, minimal margin
     static constexpr int PANEL_ICON_Y  = 8;
     static constexpr int PANEL_VAL_Y   = 34;
     static constexpr int PANEL_LINE_Y  = 54;
@@ -321,7 +325,7 @@ class LocalControlUsermod : public Usermod {
         int iconX = cx + (PANEL_COL_W - 20) / 2;   // centre the 20-px icon
 
         // Clear column
-        tft.fillRect(cx, 0, PANEL_COL_W, 100, TFT_BLACK);
+        tft.fillRect(cx, 0, PANEL_COL_W, PANEL_HEIGHT, TFT_BLACK);
 
         // Icon
         bool isOn = (bri > 0);
@@ -403,6 +407,14 @@ class LocalControlUsermod : public Usermod {
      * You can use it to initialize variables, sensors or similar.
      */
     void setup() override {
+      // Set enable output high.
+      pinMode(ENABLE_PIN, OUTPUT);
+      digitalWrite(ENABLE_PIN, HIGH);
+
+      // Set level shifter enable low.
+      pinMode(LEVEL_SHIFTER_ENABLE_PIN, OUTPUT);
+      digitalWrite(LEVEL_SHIFTER_ENABLE_PIN, LOW);
+
       // do your set-up here
       Serial.println("Setting up localcontrol");
 
@@ -414,7 +426,7 @@ class LocalControlUsermod : public Usermod {
       rotary2.begin();
 
       tft.init();
-      tft.setRotation(2);
+      tft.setRotation(1);  // landscape, 320x240
       tft.fillScreen(TFT_BLACK);
 
       drawPanel();
