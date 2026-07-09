@@ -48,12 +48,13 @@ class LocalControlUsermod : public Usermod {
     uint8_t lastPanelIntensity = 255;
 
     // ── Preset/playlist menu list state ─────────────────────────────────────
-    static constexpr int MENU_TOP     = 64;   // y where the list starts (must match PANEL_HEIGHT below)
-    static constexpr int MENU_HEIGHT  = 176;  // available height (320x240 landscape: 240 - MENU_TOP)
+    static constexpr int MENU_LEFT    = 80;   // x where the list starts (must match PANEL_WIDTH below)
+    static constexpr int MENU_TOP     = 0;    // list now spans the full screen height
+    static constexpr int MENU_HEIGHT  = 240;  // available height (320x240 landscape, full height)
     static constexpr int MENU_ROW_H   = 17;   // height of each row (font 2 ~16px + 1px gap)
     static constexpr int MENU_VISIBLE = MENU_HEIGHT / MENU_ROW_H;  // rows on screen at once
     static constexpr int MENU_ARROW_W = 12;   // space reserved for the active-entry arrow
-    static constexpr int MENU_TEXT_X  = MENU_ARROW_W + 2;
+    static constexpr int MENU_TEXT_X  = MENU_LEFT + MENU_ARROW_W + 2;
 
     struct MenuEntry { uint16_t id; bool isPlaylist; char name[32]; };
     std::vector<MenuEntry> menuEntries;
@@ -300,23 +301,23 @@ class LocalControlUsermod : public Usermod {
         bool isCursor = (idx == listCursorIndex);
 
         // Background
-        tft.fillRect(0, y, tft.width(), MENU_ROW_H, TFT_BLACK);
+        tft.fillRect(MENU_LEFT, y, tft.width() - MENU_LEFT, MENU_ROW_H, TFT_BLACK);
 
         // Active-entry arrow — small right-pointing triangle, vertically centred in row
         if (isActive) {
             int ay = y + MENU_ROW_H / 2;
-            tft.fillTriangle(1, ay - 5, 1, ay + 5, 10, ay, TFT_CYAN);
+            tft.fillTriangle(MENU_LEFT + 1, ay - 5, MENU_LEFT + 1, ay + 5, MENU_LEFT + 10, ay, TFT_CYAN);
         }
 
         // Playlist marker — small dot in the arrow gutter, distinct from the active arrow,
         // so playlists are recognisable while scrolling even when not currently active.
         if (entry.isPlaylist) {
-            tft.fillCircle(MENU_ARROW_W - 4, y + MENU_ROW_H / 2, 2, tft.color565(0, 180, 255));
+            tft.fillCircle(MENU_LEFT + MENU_ARROW_W - 4, y + MENU_ROW_H / 2, 2, tft.color565(0, 180, 255));
         }
 
         // Cursor outline box
         if (isCursor && !isActive) {
-            tft.drawRect(MENU_ARROW_W, y, tft.width() - MENU_ARROW_W, MENU_ROW_H - 1,
+            tft.drawRect(MENU_LEFT + MENU_ARROW_W, y, tft.width() - MENU_LEFT - MENU_ARROW_W, MENU_ROW_H - 1,
                          tft.color565(100, 100, 100));
         }
 
@@ -329,10 +330,10 @@ class LocalControlUsermod : public Usermod {
 
     // Redraw the entire visible portion of the menu list
     void drawMenuList() {
-        tft.fillRect(0, MENU_TOP, tft.width(), MENU_HEIGHT, TFT_BLACK);
+        tft.fillRect(MENU_LEFT, MENU_TOP, tft.width() - MENU_LEFT, MENU_HEIGHT, TFT_BLACK);
         if (menuEntries.empty()) {
             tft.setTextColor(tft.color565(160, 160, 160), TFT_BLACK);
-            tft.drawCentreString("No presets saved", tft.width() / 2, MENU_TOP + MENU_HEIGHT / 2 - 8, 2);
+            tft.drawCentreString("No presets saved", MENU_LEFT + (tft.width() - MENU_LEFT) / 2, MENU_TOP + MENU_HEIGHT / 2 - 8, 2);
             return;
         }
         int end = min(listScrollOffset + MENU_VISIBLE, (int)menuEntries.size());
@@ -342,53 +343,54 @@ class LocalControlUsermod : public Usermod {
     }
     // ────────────────────────────────────────────────────────────────────────
 
-    // ── Control panel (top 320×64 px, four 80-px columns) ────────────────────
+    // ── Control panel (left 80×240 px, four 60-px rows) ──────────────────────
     //
-    //  col 0           col 1           col 2           col 3
-    //  ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
-    //  │  [icon]  │   │  [icon]  │   │  [icon]  │   │  [icon]  │   y=8  icon (20×20)
-    //  │   128    │   │    50    │   │    75    │   │   ON     │   y=34 value (font 2)
-    //  │ ──────── │   │          │   │          │   │          │   y=54 underline
-    //  └──────────┘   └──────────┘   └──────────┘   └──────────┘
+    //  row 0 ┌──────────┐
+    //       ▐│  [icon]  │  y+8  icon (20×20)
+    //       ▐│   128    │  y+34 value (font 2)
+    //  row 1 ├──────────┤  left edge: bright bar when selected
+    //  row 2 ├──────────┤
+    //  row 3 └──────────┘
 
-    static constexpr int PANEL_COL_W   = 80;
-    static constexpr int PANEL_HEIGHT  = 64;   // just past the underline, minimal margin
-    static constexpr int PANEL_ICON_Y  = 8;
-    static constexpr int PANEL_VAL_Y   = 34;
-    static constexpr int PANEL_LINE_Y  = 54;
+    static constexpr int PANEL_WIDTH   = 80;
+    static constexpr int PANEL_ROW_H   = 60;   // 240 / 4 rows
+    static constexpr int PANEL_ICON_Y  = 8;    // offset within row
+    static constexpr int PANEL_VAL_Y   = 34;   // offset within row
+    static constexpr int PANEL_BAR_W   = 4;    // selection-indicator bar width
 
-    void drawPanelItem(int col, bool selected) {
-        int cx    = col * PANEL_COL_W;              // left edge of column
-        int iconX = cx + (PANEL_COL_W - 20) / 2;   // centre the 20-px icon
+    void drawPanelItem(int row, bool selected) {
+        int ry    = row * PANEL_ROW_H;             // top edge of row
+        int iconX = (PANEL_WIDTH - 20) / 2;        // centre the 20-px icon horizontally
+        int iconY = ry + PANEL_ICON_Y;
 
-        // Clear column
-        tft.fillRect(cx, 0, PANEL_COL_W, PANEL_HEIGHT, TFT_BLACK);
+        // Clear row
+        tft.fillRect(0, ry, PANEL_WIDTH, PANEL_ROW_H, TFT_BLACK);
 
         // Icon
         bool isOn = (bri > 0);
-        switch ((PanelItem)col) {
+        switch ((PanelItem)row) {
             case PanelItem::Brightness:
-                drawIconSun(iconX, PANEL_ICON_Y, selected ? TFT_YELLOW : tft.color565(230, 230, 0));
+                drawIconSun(iconX, iconY, selected ? TFT_YELLOW : tft.color565(230, 230, 0));
                 break;
             case PanelItem::Speed:
-                drawIconSpeed(iconX, PANEL_ICON_Y, selected ? TFT_GREEN : tft.color565(0, 230, 0));
+                drawIconSpeed(iconX, iconY, selected ? TFT_GREEN : tft.color565(0, 230, 0));
                 break;
             case PanelItem::Intensity: {
                 uint16_t red = tft.color565(selected ? 220 : 198, selected ? 40 : 36, 0);
                 uint16_t org = tft.color565(selected ? 255 : 230, selected ? 120 : 108, 0);
                 uint16_t yel = tft.color565(selected ? 255 : 230, selected ? 230 : 207, 0);
-                tft.fillTriangle(iconX+10, PANEL_ICON_Y+1,  iconX+2,  PANEL_ICON_Y+14, iconX+18, PANEL_ICON_Y+14, red);
-                tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 6,                                                      red);
-                tft.fillTriangle(iconX+10, PANEL_ICON_Y+5,  iconX+5,  PANEL_ICON_Y+14, iconX+15, PANEL_ICON_Y+14, org);
-                tft.fillCircle  (iconX+10, PANEL_ICON_Y+14, 4,                                                      org);
-                tft.fillCircle  (iconX+10, PANEL_ICON_Y+15, 3,                                                      yel);
-                tft.fillTriangle(iconX+10, PANEL_ICON_Y+10, iconX+8,  PANEL_ICON_Y+15, iconX+12, PANEL_ICON_Y+15, yel);
+                tft.fillTriangle(iconX+10, iconY+1,  iconX+2,  iconY+14, iconX+18, iconY+14, red);
+                tft.fillCircle  (iconX+10, iconY+14, 6,                                          red);
+                tft.fillTriangle(iconX+10, iconY+5,  iconX+5,  iconY+14, iconX+15, iconY+14, org);
+                tft.fillCircle  (iconX+10, iconY+14, 4,                                          org);
+                tft.fillCircle  (iconX+10, iconY+15, 3,                                          yel);
+                tft.fillTriangle(iconX+10, iconY+10, iconX+8,  iconY+15, iconX+12, iconY+15, yel);
                 break;
             }
             case PanelItem::Power: {
                 uint16_t pwrColor = isOn ? (selected ? TFT_GREEN : tft.color565(0, 230, 0))
                                          : (selected ? TFT_RED   : tft.color565(230, 0, 0));
-                drawIconPower(iconX, PANEL_ICON_Y, pwrColor);
+                drawIconPower(iconX, iconY, pwrColor);
                 break;
             }
             default: break;
@@ -396,18 +398,19 @@ class LocalControlUsermod : public Usermod {
 
         // Value label
         tft.setTextColor(selected ? TFT_WHITE : tft.color565(230, 230, 230), TFT_BLACK);
-        int textCX = cx + PANEL_COL_W / 2;
-        switch ((PanelItem)col) {
-            case PanelItem::Brightness: tft.drawCentreString(String(bri),             textCX, PANEL_VAL_Y, 2); break;
-            case PanelItem::Speed:      tft.drawCentreString(String(effectSpeed),     textCX, PANEL_VAL_Y, 2); break;
-            case PanelItem::Intensity:  tft.drawCentreString(String(effectIntensity), textCX, PANEL_VAL_Y, 2); break;
-            case PanelItem::Power:      tft.drawCentreString(isOn ? "ON" : "OFF",     textCX, PANEL_VAL_Y, 2); break;
+        int textCX = PANEL_WIDTH / 2;
+        int textCY = ry + PANEL_VAL_Y;
+        switch ((PanelItem)row) {
+            case PanelItem::Brightness: tft.drawCentreString(String(bri),             textCX, textCY, 2); break;
+            case PanelItem::Speed:      tft.drawCentreString(String(effectSpeed),     textCX, textCY, 2); break;
+            case PanelItem::Intensity:  tft.drawCentreString(String(effectIntensity), textCX, textCY, 2); break;
+            case PanelItem::Power:      tft.drawCentreString(isOn ? "ON" : "OFF",     textCX, textCY, 2); break;
             default: break;
         }
 
-        // Selection underline
+        // Selection indicator — vertical bar along the row's left edge
         if (selected) {
-            tft.drawLine(cx + 4, PANEL_LINE_Y, cx + PANEL_COL_W - 4, PANEL_LINE_Y, TFT_WHITE);
+            tft.fillRect(0, ry, PANEL_BAR_W, PANEL_ROW_H, TFT_WHITE);
         }
     }
 
