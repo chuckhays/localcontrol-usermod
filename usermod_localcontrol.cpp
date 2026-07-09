@@ -1,6 +1,7 @@
 #include "wled.h"
 #include <SPI.h>
 #include <TFT_eSPI.h>
+#include <vector>
 #include "KY040Encoder.h"
 
 // #define XPT2046_IRQ 38
@@ -46,36 +47,41 @@ class LocalControlUsermod : public Usermod {
     uint8_t lastPanelSpeed     = 255;
     uint8_t lastPanelIntensity = 255;
 
-    // ── Effect list state ────────────────────────────────────────────────────
-    static constexpr int FXLIST_TOP     = 64;   // y where the list starts (must match PANEL_HEIGHT below)
-    static constexpr int FXLIST_HEIGHT  = 176;  // available height (320x240 landscape: 240 - FXLIST_TOP)
-    static constexpr int FXLIST_ROW_H   = 17;   // height of each row (font 2 ~16px + 1px gap)
-    static constexpr int FXLIST_VISIBLE = FXLIST_HEIGHT / FXLIST_ROW_H;  // rows on screen at once
-    static constexpr int FXLIST_ARROW_W = 12;   // space reserved for the active-effect arrow
-    static constexpr int FXLIST_TEXT_X  = FXLIST_ARROW_W + 2;
+    // ── Preset/playlist menu list state ─────────────────────────────────────
+    static constexpr int MENU_TOP     = 64;   // y where the list starts (must match PANEL_HEIGHT below)
+    static constexpr int MENU_HEIGHT  = 176;  // available height (320x240 landscape: 240 - MENU_TOP)
+    static constexpr int MENU_ROW_H   = 17;   // height of each row (font 2 ~16px + 1px gap)
+    static constexpr int MENU_VISIBLE = MENU_HEIGHT / MENU_ROW_H;  // rows on screen at once
+    static constexpr int MENU_ARROW_W = 12;   // space reserved for the active-entry arrow
+    static constexpr int MENU_TEXT_X  = MENU_ARROW_W + 2;
+
+    struct MenuEntry { uint16_t id; bool isPlaylist; char name[32]; };
+    std::vector<MenuEntry> menuEntries;
 
     int listScrollOffset  = 0;
     int listCursorIndex   = 0;
-    uint8_t lastListEffect = 255;
+    unsigned long lastPresetsModifiedTime = (unsigned long)-1;  // forces initial build
+    int16_t lastActiveId  = -2;  // sentinel, distinct from -1 (no playlist) and 0 (no preset)
     bool listInitialized  = false;
     // ────────────────────────────────────────────────────────────────────────
 
     void onEncoderRotate(EncoderId id, int delta) {
         Serial.printf("Encoder %d: %+d\n", (int)id, delta);
         if (id == EncoderId::Rotary2) {
-            int count      = strip.getModeCount();
+            if (menuEntries.empty()) return;
+            int count      = (int)menuEntries.size();
             int prevCursor = listCursorIndex;
             int prevOffset = listScrollOffset;
             listCursorIndex = constrain(listCursorIndex + delta, 0, count - 1);
             if (listCursorIndex < listScrollOffset)
                 listScrollOffset = listCursorIndex;
-            else if (listCursorIndex >= listScrollOffset + FXLIST_VISIBLE)
-                listScrollOffset = listCursorIndex - FXLIST_VISIBLE + 1;
+            else if (listCursorIndex >= listScrollOffset + MENU_VISIBLE)
+                listScrollOffset = listCursorIndex - MENU_VISIBLE + 1;
             if (listScrollOffset != prevOffset) {
-                drawEffectList();
+                drawMenuList();
             } else {
-                drawEffectRow(prevCursor);
-                drawEffectRow(listCursorIndex);
+                drawMenuRow(prevCursor);
+                drawMenuRow(listCursorIndex);
             }
             return;
         }
@@ -108,13 +114,10 @@ class LocalControlUsermod : public Usermod {
     void onEncoderClick(EncoderId id) {
         Serial.printf("Encoder %d clicked\n", (int)id);
         if (id == EncoderId::Rotary2) {
-            uint8_t prev = effectCurrent;
-            effectCurrent = (uint8_t)listCursorIndex;
-            strip.getMainSegment().mode = effectCurrent;
-            stateUpdated(CALL_MODE_BUTTON);
-            // Redraw old active row and new active row
-            drawEffectRow(prev);
-            drawEffectRow(effectCurrent);
+            if (menuEntries.empty()) return;
+            const MenuEntry& sel = menuEntries[listCursorIndex];
+            applyPreset((byte)sel.id, CALL_MODE_BUTTON_PRESET);
+            // Active-row highlight updates itself in loop() once currentPreset/currentPlaylist change
             return;
         }
         if (id == EncoderId::Rotary1) {
@@ -248,59 +251,93 @@ class LocalControlUsermod : public Usermod {
       tft.fillRect(cx - 1, y + 2, 3, 8, color);
     }
 
-    // ── Effect list ──────────────────────────────────────────────────────────
+    // ── Preset/playlist menu ─────────────────────────────────────────────────
 
-    // Extract a short effect name (strip everything from '@' onward)
-    void getEffectName(uint8_t idx, char* buf, size_t bufLen) {
-        strncpy_P(buf, strip.getModeData(idx), bufLen - 1);
-        buf[bufLen - 1] = '\0';
-        char* at = strchr(buf, '@');
-        if (at) *at = '\0';
+    // Scan preset slots 1..250, caching name + playlist flag for each populated slot.
+    // Presets and playlists live only on the filesystem (no in-RAM list in core), so this
+    // is only called once at startup and again when presetsModifiedTime changes — not per-frame.
+    void buildMenuList() {
+        menuEntries.clear();
+        for (uint16_t id = 1; id <= 250; id++) {
+            if (!requestJSONBufferLock(JSON_LOCK_PRESET_NAME)) continue;
+            if (readObjectFromFileUsingId(getPresetsFileName(), id, pDoc)) {
+                JsonObject fdo = pDoc->as<JsonObject>();
+                if (!fdo.isNull()) {
+                    MenuEntry entry;
+                    entry.id         = id;
+                    entry.isPlaylist = !fdo[F("playlist")].isNull();
+                    if (!fdo["n"].isNull()) {
+                        strncpy(entry.name, (const char*)(fdo["n"]), sizeof(entry.name) - 1);
+                        entry.name[sizeof(entry.name) - 1] = '\0';
+                    } else {
+                        snprintf(entry.name, sizeof(entry.name), "Preset %u", id);
+                    }
+                    menuEntries.push_back(entry);
+                }
+            }
+            releaseJSONBufferLock();
+        }
+        listCursorIndex  = constrain(listCursorIndex, 0, max((int)menuEntries.size() - 1, 0));
+        listScrollOffset = constrain(listScrollOffset, 0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
     }
 
-    // Draw a single row by effect index. No-ops if the row is not currently visible.
-    void drawEffectRow(int idx) {
-        if (idx < listScrollOffset || idx >= listScrollOffset + FXLIST_VISIBLE) return;
+    // Is this entry the one currently active (applied preset, or running playlist)?
+    bool isMenuEntryActive(const MenuEntry& e) {
+        if (e.isPlaylist) return currentPlaylist == (int16_t)e.id;
+        return currentPlaylist < 0 && currentPreset == e.id;
+    }
 
+    // Draw a single row by list index. No-ops if the row is not currently visible.
+    void drawMenuRow(int idx) {
+        if (idx < listScrollOffset || idx >= listScrollOffset + MENU_VISIBLE) return;
+        if (idx < 0 || idx >= (int)menuEntries.size()) return;
+
+        const MenuEntry& entry = menuEntries[idx];
         int row = idx - listScrollOffset;
-        int y   = FXLIST_TOP + row * FXLIST_ROW_H;
+        int y   = MENU_TOP + row * MENU_ROW_H;
 
-        bool isActive = (idx == (int)effectCurrent);
+        bool isActive = isMenuEntryActive(entry);
         bool isCursor = (idx == listCursorIndex);
 
         // Background
-        tft.fillRect(0, y, tft.width(), FXLIST_ROW_H, TFT_BLACK);
+        tft.fillRect(0, y, tft.width(), MENU_ROW_H, TFT_BLACK);
 
-        // Active-effect arrow — small right-pointing triangle, vertically centred in row
+        // Active-entry arrow — small right-pointing triangle, vertically centred in row
         if (isActive) {
-            int ay = y + FXLIST_ROW_H / 2;
+            int ay = y + MENU_ROW_H / 2;
             tft.fillTriangle(1, ay - 5, 1, ay + 5, 10, ay, TFT_CYAN);
+        }
+
+        // Playlist marker — small dot in the arrow gutter, distinct from the active arrow,
+        // so playlists are recognisable while scrolling even when not currently active.
+        if (entry.isPlaylist) {
+            tft.fillCircle(MENU_ARROW_W - 4, y + MENU_ROW_H / 2, 2, tft.color565(0, 180, 255));
         }
 
         // Cursor outline box
         if (isCursor && !isActive) {
-            tft.drawRect(FXLIST_ARROW_W, y, tft.width() - FXLIST_ARROW_W, FXLIST_ROW_H - 1,
+            tft.drawRect(MENU_ARROW_W, y, tft.width() - MENU_ARROW_W, MENU_ROW_H - 1,
                          tft.color565(100, 100, 100));
         }
-
-        // Effect name
-        char name[33];
-        getEffectName((uint8_t)idx, name, sizeof(name));
 
         uint16_t textColor = isActive ? TFT_CYAN
                            : isCursor ? TFT_WHITE
                                       : tft.color565(160, 160, 160);
         tft.setTextColor(textColor, TFT_BLACK);
-        tft.drawString(name, FXLIST_TEXT_X + 2, y + 1, 2);
+        tft.drawString(entry.name, MENU_TEXT_X + 2, y + 1, 2);
     }
 
-    // Redraw the entire visible portion of the effect list
-    void drawEffectList() {
-        tft.fillRect(0, FXLIST_TOP, tft.width(), FXLIST_HEIGHT, TFT_BLACK);
-        int count = strip.getModeCount();
-        int end   = min(listScrollOffset + FXLIST_VISIBLE, count);
+    // Redraw the entire visible portion of the menu list
+    void drawMenuList() {
+        tft.fillRect(0, MENU_TOP, tft.width(), MENU_HEIGHT, TFT_BLACK);
+        if (menuEntries.empty()) {
+            tft.setTextColor(tft.color565(160, 160, 160), TFT_BLACK);
+            tft.drawCentreString("No presets saved", tft.width() / 2, MENU_TOP + MENU_HEIGHT / 2 - 8, 2);
+            return;
+        }
+        int end = min(listScrollOffset + MENU_VISIBLE, (int)menuEntries.size());
         for (int i = listScrollOffset; i < end; i++) {
-            drawEffectRow(i);
+            drawMenuRow(i);
         }
     }
     // ────────────────────────────────────────────────────────────────────────
@@ -478,29 +515,51 @@ class LocalControlUsermod : public Usermod {
         drawPanelItem((int)PanelItem::Intensity, panelSelected == PanelItem::Intensity);
       }
 
-      // Lazy init: defer until strip has registered its effects
-      if (!listInitialized && strip.getModeCount() > 1) {
-        listInitialized  = true;
-        lastListEffect   = effectCurrent;
-        listCursorIndex  = effectCurrent;
-        listScrollOffset = constrain((int)effectCurrent - FXLIST_VISIBLE / 2,
-                                     0, (int)strip.getModeCount() - FXLIST_VISIBLE);
-        drawEffectList();
+      // Lazy init: build the preset/playlist list once on first pass.
+      if (!listInitialized) {
+        listInitialized = true;
+        buildMenuList();
+        lastPresetsModifiedTime = presetsModifiedTime;
+        for (size_t i = 0; i < menuEntries.size(); i++) {
+            if (isMenuEntryActive(menuEntries[i])) { listCursorIndex = (int)i; break; }
+        }
+        lastActiveId = currentPlaylist >= 0 ? currentPlaylist : currentPreset;
+        listScrollOffset = constrain(listCursorIndex - MENU_VISIBLE / 2,
+                                     0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
+        drawMenuList();
       }
 
-      // If effect changed externally (app, preset, etc.) sync cursor and scroll.
-      if (listInitialized && effectCurrent != lastListEffect) {
-        uint8_t prev = lastListEffect;
-        lastListEffect  = effectCurrent;
-        listCursorIndex = effectCurrent;  // keep cursor in sync with active effect
-        if ((int)effectCurrent < listScrollOffset ||
-            (int)effectCurrent >= listScrollOffset + FXLIST_VISIBLE) {
-            listScrollOffset = constrain((int)effectCurrent - FXLIST_VISIBLE / 2,
-                                         0, (int)strip.getModeCount() - FXLIST_VISIBLE);
-            drawEffectList();
-        } else {
-            drawEffectRow(prev);
-            drawEffectRow(effectCurrent);
+      // Presets were added/edited/removed via the app or web UI — rebuild the cached list.
+      if (listInitialized && presetsModifiedTime != lastPresetsModifiedTime) {
+        lastPresetsModifiedTime = presetsModifiedTime;
+        uint16_t prevSelectedId = (listCursorIndex < (int)menuEntries.size()) ? menuEntries[listCursorIndex].id : 0;
+        buildMenuList(); // clamps listCursorIndex/listScrollOffset to the new size
+        for (size_t i = 0; i < menuEntries.size(); i++) {
+            if (menuEntries[i].id == prevSelectedId) { listCursorIndex = (int)i; break; }
+        }
+        listScrollOffset = constrain(listScrollOffset, 0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
+        drawMenuList();
+      }
+
+      // If the active preset/playlist changed externally (app, button, playlist advance) sync cursor and scroll.
+      if (listInitialized) {
+        int16_t activeId = currentPlaylist >= 0 ? currentPlaylist : currentPreset;
+        if (activeId != lastActiveId) {
+            int prevIdx = -1, newIdx = -1;
+            for (size_t i = 0; i < menuEntries.size(); i++) {
+                if (menuEntries[i].id == (uint16_t)lastActiveId) prevIdx = (int)i;
+                if (menuEntries[i].id == (uint16_t)activeId)     newIdx  = (int)i;
+            }
+            lastActiveId = activeId;
+            if (newIdx >= 0) listCursorIndex = newIdx;
+            if (newIdx >= 0 && (newIdx < listScrollOffset || newIdx >= listScrollOffset + MENU_VISIBLE)) {
+                listScrollOffset = constrain(newIdx - MENU_VISIBLE / 2,
+                                             0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
+                drawMenuList();
+            } else {
+                if (prevIdx >= 0) drawMenuRow(prevIdx);
+                if (newIdx  >= 0) drawMenuRow(newIdx);
+            }
         }
       }
 
