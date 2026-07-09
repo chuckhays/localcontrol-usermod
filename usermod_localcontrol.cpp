@@ -86,7 +86,7 @@ private:
 
   void onEncoderRotate(EncoderId id, int delta)
   {
-    Serial.printf("Encoder %d: %+d\n", (int)id, delta);
+    // Serial.printf("Encoder %d: %+d\n", (int)id, delta);
     if (id == EncoderId::Rotary2)
     {
       if (menuEntries.empty())
@@ -148,7 +148,7 @@ private:
 
   void onEncoderClick(EncoderId id)
   {
-    Serial.printf("Encoder %d clicked\n", (int)id);
+    // Serial.printf("Encoder %d clicked\n", (int)id);
     if (id == EncoderId::Rotary2)
     {
       if (menuEntries.empty())
@@ -171,7 +171,7 @@ private:
 
   void onEncoderLongPress(EncoderId id)
   {
-    Serial.printf("Encoder %d long press\n", (int)id);
+    // Serial.printf("Encoder %d long press\n", (int)id);
   }
 
   TFT_eSPI tft = TFT_eSPI(TFT_WIDTH, TFT_HEIGHT);
@@ -586,7 +586,7 @@ public:
     digitalWrite(LEVEL_SHIFTER_ENABLE_PIN, LOW);
 
     // do your set-up here
-    Serial.println("Setting up localcontrol");
+    // Serial.println("Setting up localcontrol");
 
     // Use this calibration code in setup():
     // uint16_t calData[5] = { 398, 3374, 400, 3280, 7 };
@@ -707,7 +707,7 @@ public:
     bool touched = tft.getTouch(&x, &y);
     if (touched)
     {
-      Serial.printf("Touch detected at x: %i, y: %i\n", x, y);
+      // Serial.printf("Touch detected at x: %i, y: %i\n", x, y);
     }
   }
 
