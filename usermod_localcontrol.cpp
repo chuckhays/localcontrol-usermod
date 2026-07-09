@@ -64,6 +64,14 @@ class LocalControlUsermod : public Usermod {
     unsigned long lastPresetsModifiedTime = (unsigned long)-1;  // forces initial build
     int16_t lastActiveId  = -2;  // sentinel, distinct from -1 (no playlist) and 0 (no preset)
     bool listInitialized  = false;
+
+    // Scanning presets.json is a blocking FS read per slot (see readPresetEntry()) — doing all
+    // 250 slots in one go causes a noticeable stutter, most visible at boot. Instead the scan is
+    // spread across many loop() ticks, a few slots at a time; see startMenuScan()/stepMenuScan().
+    static constexpr int MENU_SCAN_IDS_PER_TICK = 3;
+    bool menuScanActive        = false;
+    uint16_t menuScanNextId    = 1;
+    uint16_t menuScanRestoreId = 0;  // preset id to reselect once a refresh scan finishes
     // ────────────────────────────────────────────────────────────────────────
 
     void onEncoderRotate(EncoderId id, int delta) {
@@ -254,32 +262,66 @@ class LocalControlUsermod : public Usermod {
 
     // ── Preset/playlist menu ─────────────────────────────────────────────────
 
-    // Scan preset slots 1..250, caching name + playlist flag for each populated slot.
-    // Presets and playlists live only on the filesystem (no in-RAM list in core), so this
-    // is only called once at startup and again when presetsModifiedTime changes — not per-frame.
-    void buildMenuList() {
-        menuEntries.clear();
-        for (uint16_t id = 1; id <= 250; id++) {
-            if (!requestJSONBufferLock(JSON_LOCK_PRESET_NAME)) continue;
-            if (readObjectFromFileUsingId(getPresetsFileName(), id, pDoc)) {
-                JsonObject fdo = pDoc->as<JsonObject>();
-                if (!fdo.isNull()) {
-                    MenuEntry entry;
-                    entry.id         = id;
-                    entry.isPlaylist = !fdo[F("playlist")].isNull();
-                    if (!fdo["n"].isNull()) {
-                        strncpy(entry.name, (const char*)(fdo["n"]), sizeof(entry.name) - 1);
-                        entry.name[sizeof(entry.name) - 1] = '\0';
-                    } else {
-                        snprintf(entry.name, sizeof(entry.name), "Preset %u", id);
-                    }
-                    menuEntries.push_back(entry);
+    // Reads preset slot `id`; on success fills `entry` (name + playlist flag) and returns true.
+    bool readPresetEntry(uint16_t id, MenuEntry& entry) {
+        bool found = false;
+        if (!requestJSONBufferLock(JSON_LOCK_PRESET_NAME)) return false;
+        if (readObjectFromFileUsingId(getPresetsFileName(), id, pDoc)) {
+            JsonObject fdo = pDoc->as<JsonObject>();
+            if (!fdo.isNull()) {
+                entry.id         = id;
+                entry.isPlaylist = !fdo[F("playlist")].isNull();
+                if (!fdo["n"].isNull()) {
+                    strncpy(entry.name, (const char*)(fdo["n"]), sizeof(entry.name) - 1);
+                    entry.name[sizeof(entry.name) - 1] = '\0';
+                } else {
+                    snprintf(entry.name, sizeof(entry.name), "Preset %u", id);
                 }
+                found = true;
             }
-            releaseJSONBufferLock();
         }
-        listCursorIndex  = constrain(listCursorIndex, 0, max((int)menuEntries.size() - 1, 0));
-        listScrollOffset = constrain(listScrollOffset, 0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
+        releaseJSONBufferLock();
+        return found;
+    }
+
+    // Begin an incremental scan of preset slots 1..250. Call stepMenuScan() once per loop()
+    // tick (see loop()) until it completes rather than scanning everything up front.
+    // If preserveSelection, the currently-selected preset id is remembered and reselected once
+    // the scan finishes (used when refreshing after presetsModifiedTime changes); otherwise the
+    // scan will select whichever preset/playlist is actually active once it finishes (boot).
+    void startMenuScan(bool preserveSelection) {
+        menuScanRestoreId = (preserveSelection && listCursorIndex < (int)menuEntries.size())
+                           ? menuEntries[listCursorIndex].id : 0;
+        menuEntries.clear();
+        menuScanNextId = 1;
+        menuScanActive = true;
+        drawMenuList(); // shows the "No presets saved" placeholder briefly while the scan runs
+    }
+
+    // Processes a bounded batch of preset ids (MENU_SCAN_IDS_PER_TICK) and returns. Intended to
+    // be called once per loop() tick while menuScanActive, so no single tick blocks for long.
+    void stepMenuScan() {
+        uint16_t end = (uint16_t)min((int)menuScanNextId + MENU_SCAN_IDS_PER_TICK, 251);
+        bool appended = false;
+        for (; menuScanNextId < end; menuScanNextId++) {
+            MenuEntry entry;
+            if (readPresetEntry(menuScanNextId, entry)) {
+                menuEntries.push_back(entry);
+                appended = true;
+            }
+        }
+        if (menuScanNextId > 250) {
+            menuScanActive = false;
+            int restoreIdx = -1;
+            for (size_t i = 0; i < menuEntries.size(); i++) {
+                if (menuScanRestoreId ? (menuEntries[i].id == menuScanRestoreId) : isMenuEntryActive(menuEntries[i]))
+                    restoreIdx = (int)i;
+            }
+            listCursorIndex  = constrain(restoreIdx >= 0 ? restoreIdx : 0, 0, max((int)menuEntries.size() - 1, 0));
+            listScrollOffset = constrain(listCursorIndex - MENU_VISIBLE / 2, 0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
+            lastActiveId      = currentPlaylist >= 0 ? currentPlaylist : currentPreset;
+        }
+        if (appended || !menuScanActive) drawMenuList();
     }
 
     // Is this entry the one currently active (applied preset, or running playlist)?
@@ -518,34 +560,29 @@ class LocalControlUsermod : public Usermod {
         drawPanelItem((int)PanelItem::Intensity, panelSelected == PanelItem::Intensity);
       }
 
-      // Lazy init: build the preset/playlist list once on first pass.
+      // Lazy init: kick off the preset/playlist scan once on first pass. It runs incrementally
+      // via stepMenuScan() below rather than blocking here — see MENU_SCAN_IDS_PER_TICK.
       if (!listInitialized) {
         listInitialized = true;
-        buildMenuList();
         lastPresetsModifiedTime = presetsModifiedTime;
-        for (size_t i = 0; i < menuEntries.size(); i++) {
-            if (isMenuEntryActive(menuEntries[i])) { listCursorIndex = (int)i; break; }
-        }
-        lastActiveId = currentPlaylist >= 0 ? currentPlaylist : currentPreset;
-        listScrollOffset = constrain(listCursorIndex - MENU_VISIBLE / 2,
-                                     0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
-        drawMenuList();
+        startMenuScan(false);
       }
 
-      // Presets were added/edited/removed via the app or web UI — rebuild the cached list.
-      if (listInitialized && presetsModifiedTime != lastPresetsModifiedTime) {
+      // Presets were added/edited/removed via the app or web UI — rescan, preserving the
+      // current selection (by id) where possible.
+      if (listInitialized && !menuScanActive && presetsModifiedTime != lastPresetsModifiedTime) {
         lastPresetsModifiedTime = presetsModifiedTime;
-        uint16_t prevSelectedId = (listCursorIndex < (int)menuEntries.size()) ? menuEntries[listCursorIndex].id : 0;
-        buildMenuList(); // clamps listCursorIndex/listScrollOffset to the new size
-        for (size_t i = 0; i < menuEntries.size(); i++) {
-            if (menuEntries[i].id == prevSelectedId) { listCursorIndex = (int)i; break; }
-        }
-        listScrollOffset = constrain(listScrollOffset, 0, max((int)menuEntries.size() - MENU_VISIBLE, 0));
-        drawMenuList();
+        startMenuScan(true);
+      }
+
+      // Process one bounded batch of the scan per tick so it never blocks the main loop for long.
+      if (menuScanActive) {
+        stepMenuScan();
       }
 
       // If the active preset/playlist changed externally (app, button, playlist advance) sync cursor and scroll.
-      if (listInitialized) {
+      // Skipped while a scan is in-flight since menuEntries is only partially populated.
+      if (listInitialized && !menuScanActive) {
         int16_t activeId = currentPlaylist >= 0 ? currentPlaylist : currentPreset;
         if (activeId != lastActiveId) {
             int prevIdx = -1, newIdx = -1;
